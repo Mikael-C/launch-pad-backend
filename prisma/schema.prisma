@@ -1,0 +1,348 @@
+// Launchpad Platform — Full Prisma Schema
+// Covers: Part 1 (Launchpad), Part 2 (Marketplace + Referral), Part 3 (Stablecoin), Part 4 (DMS)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ============================================================
+// PART 1 — AGGREGATION DEX (CORE LAUNCHPAD)
+// ============================================================
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  symbol      String
+  description String?
+  logoUrl     String?
+  website     String?
+  category    String   @default("DeFi")
+  chain       String   @default("Hoodi")
+  tier        String   @default("Standard")
+  rate        Float    @default(1.0)  // tokens per USD
+  softCap     Float
+  hardCap     Float
+  startTime   DateTime
+  endTime     DateTime
+  tokenAddress String?
+  saleAddress  String?  // on-chain sale contract
+  status      String   @default("pending") // pending | approved | active | completed | rejected
+  adminNotes  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  whitelistEntries WhitelistEntry[]
+  investments      Investment[]
+  vestingSchedules VestingSchedule[]
+  watchlistEntries Watchlist[]
+  comments         Comment[]
+  upvotes          Upvote[]
+  stats            ProjectStats?
+  operationRefs    PendingOperation[]
+
+  @@map("projects")
+}
+
+model WhitelistEntry {
+  id            String   @id @default(cuid())
+  projectId     String
+  walletAddress String
+  tier          String   @default("BRONZE") // BRONZE | SILVER | GOLD | PLATINUM
+  maxAllocation Float
+  addedAt       DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, walletAddress])
+  @@map("whitelist_entries")
+}
+
+model Investment {
+  id        String   @id @default(cuid())
+  userId    String   // wallet address or sx_id
+  projectId String
+  amount    Float    // in USD
+  stablecoin String  // USDC | USDT | DAI
+  txHash    String?
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@map("investments")
+}
+
+model VestingSchedule {
+  id            String   @id @default(cuid())
+  userId        String
+  projectId     String
+  totalAmount   Float    // total tokens
+  claimedAmount Float    @default(0)
+  cliffEnd      DateTime
+  vestingEnd    DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([userId, projectId])
+  @@map("vesting_schedules")
+}
+
+// ============================================================
+// PART 2 — MARKETPLACE
+// ============================================================
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  sxId      String
+  projectId String
+  addedAt   DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([sxId, projectId])
+  @@map("watchlist")
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  projectId String
+  sxId      String
+  content   String
+  signature String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@map("comments")
+}
+
+model Upvote {
+  id        String   @id @default(cuid())
+  projectId String
+  sxId      String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, sxId])
+  @@map("upvotes")
+}
+
+model ProjectStats {
+  id             String   @id @default(cuid())
+  projectId      String   @unique
+  tvl            Float    @default(0)
+  investorCount  Int      @default(0)
+  dailySnapshot  String?  // JSON: [{date, tvl, investors}]
+  updatedAt      DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@map("project_stats")
+}
+
+// ============================================================
+// PART 2 — REFERRAL SYSTEM
+// ============================================================
+
+model Referral {
+  id           String   @id @default(cuid())
+  referrerId   String   // wallet address of referrer
+  referredId   String?  // wallet address of referred user (set on registration)
+  code         String   @unique
+  platform     String   // telegram | twitter | facebook
+  status       String   @default("pending") // pending | completed | expired
+  rewardIssued Boolean  @default(false)
+  reward       Float    @default(100) // $100 per successful referral
+  clickCount   Int      @default(0)
+  registeredAt DateTime?
+  depositedAt  DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  clicks ReferralClick[]
+
+  @@map("referrals")
+}
+
+model ReferralClick {
+  id         String   @id @default(cuid())
+  referralId String
+  ipHash     String?  // hashed IP for dedup
+  userAgent  String?
+  clickedAt  DateTime @default(now())
+
+  referral Referral @relation(fields: [referralId], references: [id])
+
+  @@map("referral_clicks")
+}
+
+// ============================================================
+// PART 3 — STABLECOIN ACCOUNT
+// ============================================================
+
+model StablecoinAccount {
+  id             String   @id @default(cuid())
+  sxId           String   @unique // wallet address
+  usdcBalance    Float    @default(0)
+  usdtBalance    Float    @default(0)
+  daiBalance     Float    @default(0)
+  unifiedBalance Float    @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  transactions AccountTransaction[]
+
+  @@map("stablecoin_accounts")
+}
+
+model AccountTransaction {
+  id            String   @id @default(cuid())
+  sxId          String
+  type          String   // deposit | withdraw | invest | transfer
+  amount        Float
+  stablecoinType String  // USDC | USDT | DAI
+  txHash        String?
+  signature     String?
+  toAddress     String?
+  projectId     String?
+  status        String   @default("pending") // pending | confirmed | failed
+  createdAt     DateTime @default(now())
+
+  account StablecoinAccount @relation(fields: [sxId], references: [sxId])
+
+  @@map("account_transactions")
+}
+
+// ============================================================
+// PART 4 — DMS: DEVICE MANAGEMENT SYSTEM
+// ============================================================
+
+model SuperAdmin {
+  id                   String   @id @default(cuid())
+  walletAddress        String   @unique
+  masterDeviceSerial   String?
+  masterDevicePublicKey String?
+  attestationHash      String?
+  role                 String   @default("super_admin")
+  active               Boolean  @default(true)
+  registeredAt         DateTime @default(now())
+
+  devices RegisteredDevice[]
+
+  @@map("super_admins")
+}
+
+model RegisteredDevice {
+  id                 String   @id @default(cuid())
+  deviceId           String   @unique
+  userId             String   // wallet address
+  serialNumber       String
+  publicKey          String
+  attestationHash    String
+  attestationType    String   @default("FIDO2") // FIDO2 | TPM | SIMULATED
+  trustScore         Int      @default(100)
+  isQuarantined      Boolean  @default(false)
+  isMasterDevice     Boolean  @default(false)
+  platform           String?  // windows | android | ios | web
+  osVersion          String?
+  lastSeen           DateTime @default(now())
+  registeredAt       DateTime @default(now())
+
+  superAdmin    SuperAdmin? @relation(fields: [userId], references: [walletAddress])
+  sessions      DeviceSession[]
+  integrityReports DeviceIntegrityReport[]
+
+  @@map("registered_devices")
+}
+
+model DeviceSession {
+  id           String   @id @default(cuid())
+  deviceId     String
+  accessToken  String   @unique
+  dpopPublicKey String
+  dpopJkt      String   // JWK Thumbprint
+  expiresAt    DateTime
+  revoked      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  device RegisteredDevice @relation(fields: [deviceId], references: [deviceId])
+
+  @@map("device_sessions")
+}
+
+model DeviceIntegrityReport {
+  id           String   @id @default(cuid())
+  deviceId     String
+  trustScore   Int
+  isJailbroken Boolean  @default(false)
+  isEmulator   Boolean  @default(false)
+  hasHooking   Boolean  @default(false)
+  hasDebugger  Boolean  @default(false)
+  osVersion    String?
+  signature    String?
+  remediationTriggered Boolean @default(false)
+  reportedAt   DateTime @default(now())
+
+  device RegisteredDevice @relation(fields: [deviceId], references: [deviceId])
+
+  @@map("device_integrity_reports")
+}
+
+model PendingOperation {
+  id              String   @id @default(cuid())
+  operationType   String   // CREATE_SALE | FUND_WITHDRAWAL | KILL_SWITCH_DEACTIVATE | etc.
+  description     String
+  payload         String?  // JSON
+  nonce           String   @unique
+  status          String   @default("pending") // pending | approved | executed | expired
+  approvalCount   Int      @default(0)
+  requiredApprovals Int    @default(3)
+  signatures      String   @default("[]") // JSON array of {adminWallet, deviceSerial, signature, timestamp}
+  projectId       String?
+  proposedBy      String
+  expiresAt       DateTime
+  executedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id])
+
+  @@map("pending_operations")
+}
+
+model KillSwitch {
+  id          String   @id @default(cuid())
+  active      Boolean  @default(false)
+  activatedBy String?
+  activatedAt DateTime?
+  deactivatedAt DateTime?
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  @@map("kill_switch")
+}
+
+// ============================================================
+// USERS / AUTH
+// ============================================================
+
+model User {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  sxId          String?  @unique // platform identity
+  nonce         String?  // for wallet signature auth
+  role          String   @default("user") // user | admin | super_admin
+  totpSecret    String?
+  totpEnabled   Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("users")
+}
