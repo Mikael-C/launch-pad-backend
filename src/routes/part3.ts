@@ -97,9 +97,51 @@ part3Router.post('/deposit', requireAuth, asyncHandler(async (req: AuthRequest, 
     }
   });
 
+  // ─── Auto-complete pending referrals on deposit ≥ $500 ──────
+  let referralReward = null;
+  if (amount >= 500) {
+    const pendingReferral = await prisma.referral.findFirst({
+      where: { referredId: sxId, status: 'pending' }
+    });
+
+    if (pendingReferral) {
+      await prisma.referral.update({
+        where: { id: pendingReferral.id },
+        data: { status: 'completed', rewardIssued: true, depositedAt: new Date() }
+      });
+
+      const REWARD = 100;
+      for (const userId of [pendingReferral.referrerId, sxId]) {
+        await prisma.stablecoinAccount.upsert({
+          where: { sxId: userId },
+          create: { sxId: userId, usdcBalance: REWARD, unifiedBalance: REWARD },
+          update: {
+            usdcBalance: { increment: REWARD },
+            unifiedBalance: { increment: REWARD }
+          }
+        });
+        await prisma.accountTransaction.create({
+          data: {
+            sxId: userId,
+            type: 'referral_reward',
+            amount: REWARD,
+            stablecoinType: 'USDC',
+            status: 'confirmed'
+          }
+        });
+      }
+      referralReward = {
+        referralId: pendingReferral.id,
+        referrerId: pendingReferral.referrerId,
+        reward: REWARD
+      };
+    }
+  }
+
   res.status(201).json({
     message: `${amount} ${stablecoinType} deposited successfully`,
     transaction: tx,
+    referralReward,
     newBalance: {
       usdcBalance: account.usdcBalance,
       usdtBalance: account.usdtBalance,
