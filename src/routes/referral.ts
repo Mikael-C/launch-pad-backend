@@ -91,18 +91,6 @@ referralRouter.post('/links/generate', requireAuth, asyncHandler(async (req: Aut
     return res.status(400).json({ error: 'Platform must be telegram, twitter, or facebook' });
   }
 
-  // Check for existing active link for this platform
-  const existing = await prisma.referral.findFirst({
-    where: { referrerId, platform, status: { not: 'expired' } }
-  });
-
-  if (existing) {
-    return res.status(409).json({ 
-      error: `Referral link for ${platform} already exists`,
-      link: { platform, code: existing.code, url: generateReferralLinks(existing.code, platform) }
-    });
-  }
-
   const code = nanoid(10);
   const referral = await prisma.referral.create({
     data: {
@@ -114,9 +102,16 @@ referralRouter.post('/links/generate', requireAuth, asyncHandler(async (req: Aut
   });
 
   res.status(201).json({
-    platform,
-    code: referral.code,
-    url: generateReferralLinks(code, platform)
+    link: {
+      id: referral.id,
+      platform,
+      code: referral.code,
+      url: generateReferralLinks(code, platform),
+      clickCount: 0,
+      status: 'pending',
+      reward: 0,
+      createdAt: referral.createdAt.toISOString()
+    }
   });
 }));
 
