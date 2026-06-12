@@ -93,7 +93,7 @@ part3Router.post('/deposit', requireAuth, asyncHandler(async (req: AuthRequest, 
       stablecoinType,
       txHash,
       signature,
-      status: txHash ? 'confirmed' : 'pending'
+      status: 'confirmed'
     }
   });
 
