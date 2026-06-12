@@ -87,8 +87,29 @@ authRouter.post('/login', asyncHandler(async (req: Request, res: Response) => {
     data: { nonce: null }
   });
 
-  // Get role
-  const superAdmin = await prisma.superAdmin.findUnique({ where: { walletAddress: normalizedAddress } });
+  // Get role — auto-register super admins from env vars if not already in DB
+  const envSuperAdmins = [
+    process.env.SUPER_ADMIN_1,
+    process.env.SUPER_ADMIN_2,
+    process.env.SUPER_ADMIN_3,
+  ].filter(Boolean).map(a => a!.toLowerCase());
+
+  let superAdmin = await prisma.superAdmin.findUnique({ where: { walletAddress: normalizedAddress } });
+
+  // If this wallet is listed in env vars but not yet in the superAdmin table, register it
+  if (!superAdmin && envSuperAdmins.includes(normalizedAddress)) {
+    superAdmin = await prisma.superAdmin.upsert({
+      where: { walletAddress: normalizedAddress },
+      create: { walletAddress: normalizedAddress, active: true },
+      update: { active: true }
+    });
+    // Also update user role
+    await prisma.user.update({
+      where: { walletAddress: normalizedAddress },
+      data: { role: 'super_admin' }
+    });
+  }
+
   const role = superAdmin?.active ? 'super_admin' : user.role;
 
   const token = generateToken(normalizedAddress, role);

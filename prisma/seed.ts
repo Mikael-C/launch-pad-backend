@@ -7,9 +7,9 @@ async function main() {
 
   // Create super admins
   const admins = [
-    { walletAddress: '0x1111111111111111111111111111111111111111' },
-    { walletAddress: '0x2222222222222222222222222222222222222222' },
-    { walletAddress: '0x3333333333333333333333333333333333333333' },
+    { walletAddress: (process.env.SUPER_ADMIN_1 || '0x9998d8694E7636F93A52A8330e300a84d67C99D8').toLowerCase() },
+    { walletAddress: (process.env.SUPER_ADMIN_2 || '0x3488615B20F2a39640Be694a66D2b86182faaF51').toLowerCase() },
+    { walletAddress: (process.env.SUPER_ADMIN_3 || '0x6bBA7BD264b20C30Ae93948bDC92cf295f2049f0').toLowerCase() },
   ];
 
   for (const admin of admins) {
