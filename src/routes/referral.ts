@@ -22,9 +22,10 @@ const EXPIRY_DAYS = 30;
 function generateReferralLinks(code: string, platform: string) {
   const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
   const refUrl = encodeURIComponent(`${baseUrl}?ref=${code}`);
+  const shareText = encodeURIComponent('Join Launchpad Platform via my referral link!');
   
   const links: Record<string, string> = {
-    telegram: `https://t.me/launchpad_bot?start=ref_${code}`,
+    telegram: `https://t.me/share/url?url=${refUrl}&text=${shareText}`,
     twitter: `https://twitter.com/intent/tweet?url=${refUrl}&text=Join%20Launchpad%20Platform%20via%20my%20referral%20link!&ref=${code}`,
     facebook: `https://www.facebook.com/sharer/sharer.php?u=${refUrl}&ref=${code}`
   };
