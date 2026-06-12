@@ -38,15 +38,18 @@ referralRouter.get('/links', requireAuth, asyncHandler(async (req: AuthRequest, 
   
   const referrals = await prisma.referral.findMany({
     where: { referrerId },
-    select: { code: true, platform: true, clickCount: true, status: true, createdAt: true }
+    select: { id: true, code: true, platform: true, clickCount: true, status: true, rewardIssued: true, createdAt: true }
   });
 
   const links = referrals.map(r => ({
+    id: r.id,
     platform: r.platform,
     code: r.code,
     url: generateReferralLinks(r.code, r.platform),
-    clicks: r.clickCount,
-    status: r.status
+    clickCount: r.clickCount,
+    status: r.status,
+    reward: r.rewardIssued ? REWARD_AMOUNT : 0,
+    createdAt: r.createdAt.toISOString()
   }));
 
   // If no links exist yet, generate all three
@@ -63,11 +66,14 @@ referralRouter.get('/links', requireAuth, asyncHandler(async (req: AuthRequest, 
         }
       });
       created.push({
+        id: ref.id,
         platform,
         code: ref.code,
         url: generateReferralLinks(ref.code, platform),
-        clicks: 0,
-        status: 'pending'
+        clickCount: 0,
+        status: 'pending',
+        reward: 0,
+        createdAt: ref.createdAt.toISOString()
       });
     }
     return res.json({ links: created });
