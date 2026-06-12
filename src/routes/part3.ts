@@ -100,41 +100,67 @@ part3Router.post('/deposit', requireAuth, asyncHandler(async (req: AuthRequest, 
   // ─── Auto-complete pending referrals on deposit ≥ $500 ──────
   let referralReward = null;
   if (amount >= 500) {
-    const pendingReferral = await prisma.referral.findFirst({
-      where: { referredId: sxId, status: 'pending' }
-    });
-
-    if (pendingReferral) {
-      await prisma.referral.update({
-        where: { id: pendingReferral.id },
-        data: { status: 'completed', rewardIssued: true, depositedAt: new Date() }
+    try {
+      // First, try to find a referral where this user is already registered as referred
+      let pendingReferral = await prisma.referral.findFirst({
+        where: { referredId: sxId, status: 'pending' }
       });
 
-      const REWARD = 100;
-      for (const userId of [pendingReferral.referrerId, sxId]) {
-        await prisma.stablecoinAccount.upsert({
-          where: { sxId: userId },
-          create: { sxId: userId, usdcBalance: REWARD, unifiedBalance: REWARD },
-          update: {
-            usdcBalance: { increment: REWARD },
-            unifiedBalance: { increment: REWARD }
-          }
-        });
-        await prisma.accountTransaction.create({
-          data: {
-            sxId: userId,
-            type: 'referral_reward',
-            amount: REWARD,
-            stablecoinType: 'USDC',
-            status: 'confirmed'
-          }
-        });
+      // If not found, check if frontend sent a referral code (fallback for when register didn't fire)
+      if (!pendingReferral && req.body.referralCode) {
+        const refCode = req.body.referralCode;
+        const refByCode = await prisma.referral.findUnique({ where: { code: refCode } });
+        if (refByCode && refByCode.referrerId !== sxId && !refByCode.referredId && refByCode.status !== 'expired') {
+          // Auto-register this referral inline
+          await prisma.referral.update({
+            where: { code: refCode },
+            data: { referredId: sxId, registeredAt: new Date(), status: 'pending' }
+          });
+          pendingReferral = await prisma.referral.findFirst({
+            where: { referredId: sxId, status: 'pending' }
+          });
+          console.log(`[Referral] Auto-registered referral code ${refCode} for ${sxId}`);
+        }
       }
-      referralReward = {
-        referralId: pendingReferral.id,
-        referrerId: pendingReferral.referrerId,
-        reward: REWARD
-      };
+
+      if (pendingReferral) {
+        await prisma.referral.update({
+          where: { id: pendingReferral.id },
+          data: { status: 'completed', rewardIssued: true, depositedAt: new Date() }
+        });
+
+        const REWARD = 100;
+        for (const userId of [pendingReferral.referrerId, sxId]) {
+          await prisma.stablecoinAccount.upsert({
+            where: { sxId: userId },
+            create: { sxId: userId, usdcBalance: REWARD, unifiedBalance: REWARD },
+            update: {
+              usdcBalance: { increment: REWARD },
+              unifiedBalance: { increment: REWARD }
+            }
+          });
+          await prisma.accountTransaction.create({
+            data: {
+              sxId: userId,
+              type: 'referral_reward',
+              amount: REWARD,
+              stablecoinType: 'USDC',
+              status: 'confirmed'
+            }
+          });
+        }
+        referralReward = {
+          referralId: pendingReferral.id,
+          referrerId: pendingReferral.referrerId,
+          reward: REWARD
+        };
+        console.log(`[Referral] Completed referral ${pendingReferral.id}: ${pendingReferral.referrerId} -> ${sxId}, $${REWARD} each`);
+      } else {
+        console.log(`[Referral] No pending referral found for ${sxId}`);
+      }
+    } catch (refErr) {
+      console.error('[Referral] Error during referral completion:', refErr);
+      // Don't fail the deposit because of referral issues
     }
   }
 
