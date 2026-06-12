@@ -38,8 +38,17 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
+// Build allowed origins list from env (comma-separated) + defaults
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'https://launchpad-frontend-lyart.vercel.app',
+  ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(s => s.trim()) : [])
+].filter(Boolean);
+
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', process.env.CORS_ORIGIN || ''],
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'DPoP', 'X-Device-ID']
