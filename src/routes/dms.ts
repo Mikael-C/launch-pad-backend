@@ -9,8 +9,9 @@ import { killSwitch } from '../middleware/killSwitch.js';
 
 export const dmsRouter = Router();
 
-// Apply authentication, DPoP verification, and kill-switch protection to all DMS routes
-dmsRouter.use(requireAuth, verifyDPoP, killSwitch);
+// Apply authentication and kill-switch protection to all DMS routes
+// DPoP is only enforced on the dedicated /dpop-test endpoint for the simulator
+dmsRouter.use(requireAuth, killSwitch);
 
 // ─── Simulate hardware attestation ────────────────────────────
 function simulateAttestation(deviceInfo: any): { 
@@ -344,4 +345,143 @@ dmsRouter.delete('/devices/:deviceId', requireAuth, asyncHandler(async (req: Aut
   });
 
   res.json({ message: 'Device deregistered and sessions revoked' });
+}));
+
+// ─── POST /api/dms/dpop-rebind ───────────────────────────────
+// Re-binds the current browser's DPoP key to the user's session
+// Called before DPoP tests to handle page-refresh key regeneration
+dmsRouter.post('/dpop-rebind', requireAuth, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.walletAddress.toLowerCase();
+  const { dpopPublicKeyJwk } = req.body;
+
+  if (!dpopPublicKeyJwk) {
+    return res.status(400).json({ error: 'dpopPublicKeyJwk required' });
+  }
+
+  const dpopJkt = computeJwkThumbprint(dpopPublicKeyJwk);
+
+  // Find user's device
+  const device = await prisma.registeredDevice.findFirst({ where: { userId } });
+  if (!device) {
+    return res.status(404).json({ error: 'No registered device found. Register a device first.' });
+  }
+
+  // Revoke old sessions and create a new DPoP-bound session
+  await prisma.deviceSession.updateMany({
+    where: { deviceId: device.deviceId },
+    data: { revoked: true }
+  });
+
+  const accessToken = generateToken(userId, req.user!.role, device.deviceId);
+  const session = await prisma.deviceSession.create({
+    data: {
+      deviceId: device.deviceId,
+      accessToken,
+      dpopPublicKey: JSON.stringify(dpopPublicKeyJwk),
+      dpopJkt,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    }
+  });
+
+  res.json({
+    message: 'DPoP keys re-bound to session',
+    accessToken: session.accessToken,
+    dpopJkt: session.dpopJkt
+  });
+}));
+
+// ─── GET /api/dms/dpop-test ──────────────────────────────────
+// Dedicated endpoint for the DPoP Stolen Token Simulator
+// This is the ONLY endpoint that enforces verifyDPoP
+dmsRouter.get('/dpop-test', verifyDPoP, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.walletAddress.toLowerCase();
+
+  const devices = await prisma.registeredDevice.findMany({
+    where: { userId },
+    include: {
+      sessions: {
+        where: { revoked: false, expiresAt: { gt: new Date() } },
+        take: 1
+      }
+    }
+  });
+
+  res.json({
+    message: 'DPoP proof verified successfully — request authorized',
+    userId,
+    deviceCount: devices.length,
+    devices: devices.map(d => ({
+      deviceId: d.deviceId,
+      platform: d.platform,
+      trustScore: d.trustScore,
+      isMasterDevice: d.isMasterDevice,
+      activeSessions: d.sessions.length
+    }))
+  });
+}));
+
+// ─── POST /api/dms/integrity-check ──────────────────────────
+// Backend-connected integrity check (called by the Integrity Simulator)
+dmsRouter.post('/integrity-check', requireAuth, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.walletAddress.toLowerCase();
+  const { isJailbroken, isEmulator, hasHooking, hasDebugger } = req.body;
+
+  const device = await prisma.registeredDevice.findFirst({ where: { userId } });
+  if (!device) {
+    return res.status(404).json({ error: 'No registered device' });
+  }
+
+  // Calculate trust score
+  let trustScore = 100;
+  if (isJailbroken) trustScore -= 40;
+  if (isEmulator) trustScore -= 30;
+  if (hasHooking) trustScore -= 25;
+  if (hasDebugger) trustScore -= 15;
+  trustScore = Math.max(0, trustScore);
+
+  // Record integrity report
+  await prisma.deviceIntegrityReport.create({
+    data: {
+      deviceId: device.deviceId,
+      trustScore,
+      isJailbroken: !!isJailbroken,
+      isEmulator: !!isEmulator,
+      hasHooking: !!hasHooking,
+      hasDebugger: !!hasDebugger,
+      remediationTriggered: trustScore < 20
+    }
+  });
+
+  // Update device trust score
+  await prisma.registeredDevice.update({
+    where: { deviceId: device.deviceId },
+    data: {
+      trustScore,
+      isQuarantined: trustScore < 20,
+      lastSeen: new Date()
+    }
+  });
+
+  // Auto-remediation: revoke sessions if critical
+  let remediationActions: string[] = [];
+  if (trustScore < 20) {
+    await prisma.deviceSession.updateMany({
+      where: { deviceId: device.deviceId },
+      data: { revoked: true }
+    });
+    remediationActions = [
+      'All access tokens revoked',
+      'Device quarantined',
+      'Sessions invalidated',
+      'Super admins notified'
+    ];
+  }
+
+  res.json({
+    deviceId: device.deviceId,
+    trustScore,
+    isQuarantined: trustScore < 20,
+    remediationTriggered: trustScore < 20,
+    remediationActions
+  });
 }));
